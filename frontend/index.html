@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Confido Health Virtual Assistant</title>
+  <style>
+    body { font-family: "Inter", sans-serif; background-color: #f5f7fa; display: flex; justify-content: center; align-items: center; height: 100vh; }
+    .container { width: 420px; background: #fff; border-radius: 18px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); padding: 24px; display: flex; flex-direction: column; }
+    h2 { text-align: center; color: #007b83; }
+    #conversation { flex: 1; overflow-y: auto; padding: 10px; border: 1px solid #eee; border-radius: 10px; margin-bottom: 12px; height: 400px; }
+    .message { margin: 8px 0; padding: 10px; border-radius: 10px; max-width: 85%; }
+    .user { background-color: #e8f0fe; align-self: flex-end; text-align: right; }
+    .assistant { background-color: #e6f7f5; align-self: flex-start; text-align: left; }
+    .controls { display: flex; justify-content: space-between; gap: 10px; margin-top: 8px; }
+    button { flex: 1; padding: 10px; border: none; border-radius: 8px; cursor: pointer; background-color: #007b83; color: #fff; font-weight: 600; }
+    button:disabled { background-color: #aaa; }
+    #recordingIndicator { display: none; text-align: center; margin: 8px 0; color: red; font-weight: bold; }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h2>Confido Health Assistant</h2>
+    <div id="conversation"></div>
+    <div id="recordingIndicator">🔴 Recording...</div>
+    <div class="controls">
+      <button id="startBtn">Start Call</button>
+      <button id="endBtn" disabled>End Call</button>
+    </div>
+  </div>
+
+  <script>
+    const conversationDiv = document.getElementById("conversation");
+    const startBtn = document.getElementById("startBtn");
+    const endBtn = document.getElementById("endBtn");
+    const recordingIndicator = document.getElementById("recordingIndicator");
+
+    let sessionId = null;
+    let isListening = false;
+    let recordingActive = false;
+    let currentAudio = null;
+    let currentStream = null;
+    let audioContext = null;
+    let analyser = null;
+    let mediaRecorder;
+    let audioChunks = [];
+
+    function addMessage(sender, text) {
+      const msg = document.createElement("div");
+      msg.classList.add("message", sender);
+      msg.innerText = text;
+      conversationDiv.appendChild(msg);
+      conversationDiv.scrollTop = conversationDiv.scrollHeight;
+    }
+
+    function playAudio(base64Audio) {
+      if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+      currentAudio = new Audio("data:audio/mp3;base64," + base64Audio);
+      currentAudio.play();
+      currentAudio.onended = () => {
+        if (!isListening) startListening();
+      };
+    }
+
+    async function startCall() {
+      startBtn.disabled = true;
+      endBtn.disabled = false;
+
+      const response = await fetch("http://127.0.0.1:8000/start");
+      const data = await response.json();
+      sessionId = data.session_id;
+
+      addMessage("assistant", data.reply);
+      playAudio(data.audio);
+    }
+
+    async function startListening() {
+      if (isListening || recordingActive) return;
+      isListening = true;
+
+      try {
+        currentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(currentStream);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+
+        mediaRecorder.onstart = () => {
+          recordingActive = true;
+          recordingIndicator.style.display = "block";
+        };
+
+        mediaRecorder.onstop = async () => {
+          recordingActive = false;
+          recordingIndicator.style.display = "none";
+          if (currentStream) { currentStream.getTracks().forEach(t => t.stop()); currentStream = null; }
+          if (audioContext) { audioContext.close(); audioContext = null; }
+
+          const blob = new Blob(audioChunks, { type: "audio/webm" });
+          if (blob.size < 5000) { isListening = false; return; }
+
+          const formData = new FormData();
+          formData.append("file", blob, "recording.webm");
+          formData.append("session_id", sessionId);
+
+          const response = await fetch("http://127.0.0.1:8000/voice-assistant", { method: "POST", body: formData });
+          const data = await response.json();
+
+          addMessage("user", data.user_text);
+          addMessage("assistant", data.reply);
+          isListening = false;
+          playAudio(data.audio);
+        };
+
+        audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(currentStream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        const dataArray = new Float32Array(analyser.fftSize);
+
+        let silenceCounter = 0;
+        let talking = false;
+        const startTime = Date.now();
+
+        const checkVolume = () => {
+          if (!audioContext) return;
+          analyser.getFloatTimeDomainData(dataArray);
+          const rms = Math.sqrt(dataArray.reduce((a, b) => a + b * b, 0) / dataArray.length);
+
+          if (rms > 0.025) {
+            silenceCounter = 0;
+            if (!talking) { mediaRecorder.start(); talking = true; }
+          } else if (talking) {
+            silenceCounter++;
+            if (silenceCounter > 100 && mediaRecorder.state !== "inactive") {
+              mediaRecorder.stop(); talking = false; return;
+            }
+          }
+          if (Date.now() - startTime > 20000 && mediaRecorder.state !== "inactive") {
+            mediaRecorder.stop(); talking = false; return;
+          }
+          if (isListening) requestAnimationFrame(checkVolume);
+        };
+
+        requestAnimationFrame(checkVolume);
+      } catch (err) {
+        console.error(err);
+        isListening = false;
+        recordingActive = false;
+        recordingIndicator.style.display = "none";
+        alert("Microphone access denied or unavailable.");
+      }
+    }
+
+    endBtn.onclick = () => {
+      if (recordingActive && mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+      if (currentStream) { currentStream.getTracks().forEach(t => t.stop()); currentStream = null; }
+      if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+      if (audioContext) { audioContext.close(); audioContext = null; }
+      isListening = false;
+      recordingActive = false;
+      endBtn.disabled = true;
+      startBtn.disabled = false;
+      recordingIndicator.style.display = "none";
+      addMessage("assistant", "Call ended. Thank you for contacting Confido Health Clinic!");
+    };
+
+    startBtn.onclick = startCall;
+  </script>
+</body>
+</html>
