@@ -80,7 +80,7 @@ Click Start Call → the AI assistant greets you.
 Speak into your microphone → transcription + response + synthesized voice.
 
 📂 Project Structure
-confido-clinic-assistant/
+healthcare-clinic-assistant/
 │
 ├── main1.py                # FastAPI backend
 ├── backend/
