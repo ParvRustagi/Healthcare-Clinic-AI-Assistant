@@ -1,4 +1,4 @@
-🏥 Confido Clinic Voice Assistant
+🏥 Healthcare Clinic Assistant
 
 A voice-enabled virtual receptionist built with FastAPI, Whisper (STT), ElevenLabs (TTS), and Llama3.1 (via Ollama).
 It simulates a phone call experience: greeting the user, transcribing speech, generating natural responses with an LLM, and replying with synthesized voice.
@@ -21,8 +21,8 @@ It simulates a phone call experience: greeting the user, transcribing speech, ge
 
 🛠 Installation & Setup
 1. Clone the Repository
-git clone https://github.com/<your-username>/confido-clinic-assistant.git
-cd confido-clinic-assistant
+git clone https://github.com/ParvRustagi/Healthcare-Clinic-AI-Assistant.git
+cd healthcare-clinic-assistant
 
 2. Create and Activate Virtual Environment
 
